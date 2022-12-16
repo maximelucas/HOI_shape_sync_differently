@@ -1,544 +1,316 @@
 """
-Useful functions to generate hypergraphs 
-and compute the multiorder Laplacian 
-author: Maxime LUCAS (ml.maximelucas@gmail.com)
+Functions 
 """
-
 import random
-from itertools import combinations, permutations
-from math import factorial
+from copy import deepcopy
+from itertools import combinations
 
 import networkx as nx
 import numpy as np
 
-__all__ = [
-    'sort_hyperedges', 
-    'hyperedges_of_order', 
-    'to_simplicial_complex_from_hypergraph',
-    'random_hypergraph',
-    'fully_connected_hypergraph',
-    'adj_tensor_of_order', 
-    'adj_matrix_of_order',
-    'degree_of_order',
-    'laplacian_of_order',
-    'compute_laplacians_resource_constrained',
-    'compute_eigenvalues_resource_constrained',
-    'compute_eigenvalues_resource_constrained_alphas'
-]
-    
+import xgi
 
-#=======
-# UTILS
-#=======
+__all__ = ["compute_eigenvalues", 
+            "compute_eigenvalues_multi", 
+            "shuffle_hyperedges", 
+            "node_swap",
+            "find_triangles", 
+            "flag_complex_d2", 
+            "random_flag_complex_d2",
+            "degree_corr",
+            "deg_hetero_ratio",
+            ]
 
-def sort_hyperedges(hyperedges, directed=False) : 
-    """Returns list of hyperedges sorted by length and then alphabetically. 
-    If not directed, pre-sort nodes in each hyperedge alphabetically
+
+def compute_eigenvalues(H, order, weight, rescale_per_node=True):
+    """Returns the Lyapunov exponents of corresponding to the Laplacian of order d.
+
+    Parameters
+    ----------
+    HG : xgi.HyperGraph
+        Hypergraph
+    order : int
+        Order to consider.
+    weight: float
+        Weight, i.e coupling strenght gamma in [1]_.
+    rescale_per_node: bool, (default=True)
+        Whether to rescale each Laplacian of order d by d (per node).
+
+    Returns
+    -------
+    lyap : array
+        Array of dim (N,) with unsorted Lyapunov exponents
     """
-    
-    if not directed : 
-        hyperedges = [tuple(sorted(he)) for he in hyperedges]
-    
-    return sorted(hyperedges, key=lambda x: (len(x), x))
-    
-    
-def hyperedges_of_order(hyperedges, d) :
-    """Returns list of all d-hyperedges"""
-    
-    return [hyperedge for hyperedge in hyperedges if len(hyperedge)==d+1]
-    
-    
-def to_simplicial_complex_from_hypergraph(hyperedges, verbose=False) : 
-    """Converts a hypergraph to a simplicial complex
-    by adding all missing subfaces.
+
+    # compute Laplacian
+    L = xgi.laplacian(H, order, rescale_per_node=rescale_per_node)
+    K = xgi.degree_matrix(H, order)
+
+    # compute eigenvalues
+    eivals, _ = np.linalg.eigh(L)
+    lyap = -(weight / np.mean(K)) * eivals
+    return lyap
+
+
+def compute_eigenvalues_multi(H, orders, weights, rescale_per_node=True):
+    """Returns the Lyapunov exponents of corresponding to the muliotder Laplacian.
+
+    Parameters
+    ----------
+    HG : xgi.HyperGraph
+        Hypergraph
+    orders : list of int
+        Orders of interactions to consider.
+    weights: list of float
+        Weight of each order, i.e coupling strenghts gamma_i in [1]_.
+    rescale_per_node: bool, (default=True)
+        Whether to rescale each Laplacian of order d by d (per node).
+
+    Returns
+    -------
+    lyap : array
+        Array of dim (N,) with unsorted Lyapunov exponents
+    """
+
+    # compute multiorder Laplacian
+    L_multi = xgi.multiorder_laplacian(
+        H, orders, weights, rescale_per_node=rescale_per_node
+    )
+
+    # compute eigenvalues
+    eivals_multi, _ = np.linalg.eigh(L_multi)
+    lyap_multi = -eivals_multi
+    return lyap_multi
+
+
+def shuffle_hyperedges(S, order, p):
+    """Shuffle existing hyperdeges of order d with probablity p
+
+    Parameters
+    ----------
+        S: xgi.HyperGraph
+                Hypergraph
+        order: int
+                Order of hyperedges to shuffle
+        p: float
+                Probability of shuffling each hyperedge
+
+        Returns
+        -------
+        H: xgi.HyperGraph
+                Hypergraph with edges of order d shuffled
+
+    """
+
+    nodes = S.nodes
+    H = xgi.Hypergraph(S)
+
+    d_hyperedges = H.edges.filterby("order", order).members(dtype=dict)
+
+    for id_, members in d_hyperedges.items():
+        if random.random() <= p:
+            H.remove_edge(id_)
+            new_hyperedge = tuple(random.sample(nodes, order + 1))
+            while new_hyperedge in H._edge.values():
+                new_hyperedge = tuple(random.sample(nodes, order + 1))
+            H.add_edge(new_hyperedge)
+
+    assert H.num_nodes == S.num_nodes
+    assert xgi.num_edges_order(H, 1) == xgi.num_edges_order(S, 1)
+    assert xgi.num_edges_order(H, 2) == xgi.num_edges_order(S, 2)
+
+    return H
+
+
+def node_swap(H, nid1, nid2, id_temp=-1, order=None):
+    """Swap node nid1 and node nid2 in all edges of order order that contain them
     
     Parameters
     ----------
-    hyperedges : list of tuples 
-        List of hyperedges in the hypergraph to fill
-    verbose : bool
-        If True, print all added hyperedges 
+    H: HyperGraph
+        Hypergraph to consider
+    nid1: node ID
+        ID of first node to swap
+    nid2: node ID
+        ID of second node to swap
+    id_temp: node ID
+        Temporary ID given to nodes when swapping
+    order: {int, None}, default: None
+        If None, consider all orders. If an integer, 
+        consider edges of that order.
         
     Returns
     -------
-    hyperedges_simplicial : list of tuples 
+    HH: HyperGraph
     
     """
-    
-    hyperedges_simplicial = _add_all_subfaces(hyperedges, verbose=verbose)
-    
-    return hyperedges_simplicial   
 
-            
-def _add_all_subfaces(hyperedges, verbose=False) : 
-    """Adds all missing subfaces to hypergraph
+    # make sure id_temps does not exist yet
+    while id_temp in H.edges:
+        id_temp -= 1
     
-    Goes through all hyperedges, from larger to smaller,
-    and adds their subfaces if they do not exist.
+    if order:
+        edge_dict = H.edges.filterby("order", order).members(dtype=dict).copy()
+    else: 
+        edge_dict = H.edges.members(dtype=dict).copy()
+        
+    new_edge_dict = deepcopy(edge_dict)
+    HH = H.copy()
     
+    for key, members in edge_dict.items():
+    
+        if nid1 in members: 
+            members.remove(nid1)
+            members.add(id_temp)
+        new_edge_dict[key] = members
+
+    for key, members in new_edge_dict.items():
+
+        if nid2 in members: 
+            members.remove(nid2)
+            members.add(nid1)
+        new_edge_dict[key] = members
+
+    for key, members in new_edge_dict.items():
+
+        if id_temp in members: 
+            members.remove(id_temp)
+            members.add(nid2)
+        new_edge_dict[key] = members
+    
+    HH.remove_edges_from(edge_dict)
+    HH.add_edges_from(new_edge_dict)
+    
+    return HH
+
+
+def find_triangles(G):
+    """Returns list of 3-node cliques present in a graph
+
     Parameters
     ----------
-    hyperedges : list of tuples 
-        List of hyperedges in the hypergraph to fill
-    verbose : bool
-        If True, print all added hyperedges 
-        
+    G : networkx Graph
+        Graph to consider
+
     Returns
     -------
-    hyperedges : list of tuples     
-    
-    """
-    
-    hyperedges_to_add = []
-    
-    # check that all subfaces of each hyperedge exist
-    for hedge in hyperedges[::-1] : # loop over hyperedges, from larger to smaller 
+    list of triangles
+    """ 
 
-        size = len(hedge) # number of node, i.e. order+1
-        d = size - 1 # order
-        if size>=3 : # nodes are all there already, so no need to check size<=2
-            for face in combinations(hedge, size-1) : # check if all subfaces are present
+    triangles = set(
+        frozenset((n, nbr, nbr2))
+        for n in G
+        for nbr, nbr2 in combinations(G[n], 2)
+        if nbr in G[nbr2]
+    )
+    return [set(tri) for tri in triangles]
 
-                face = tuple(sorted(face))
-                if face not in hyperedges : 
-                    hyperedges_to_add.append(face)
-    
-        
-    if verbose : 
-        print(f"Info: the following hyperedges were added")
-        print(hyperedges_to_add)
-        
-    hyperedges_final = hyperedges + list(set(hyperedges_to_add))
-    hyperedges_final = sort_hyperedges(hyperedges_final)
-        
-    return hyperedges_final
-    
-#=======================
-# HYPERGRAPH GENERATORS
-#=======================
 
-def random_hypergraph(N, ps) : 
-    """Generates a random hypergraph
-    
-    Generate N nodes, and connect any d+1 nodes 
-    by a hyperedge with probability ps[d].
-        
+def flag_complex_d2(G, p2=None):
+    """Returns list of 3-node cliques present in a graph
+
     Parameters
     ----------
-    N : int 
-        Number of nodes 
-    ps : list of floats
-        Probabilities (between 0 and 1) to create a hyperedge
-        at each order d between any d+1 nodes. ps[0] is edges, 
-        ps[1] for triangles, etc.
-        
+    G : networkx Graph
+        Graph to consider
+    p2: float
+        Probability (between 0 and 1) of filling empty triangles in graph G
+
     Returns
     -------
-    List of tuples
-        List of hypergraphs
-    """
-    
-    #I first generate a standard ER graph with edges connected with probability p1
-    G = nx.fast_gnp_random_graph(N, ps[0], seed=None)
-    
+    S : xgi.SimplicialComplex
+
+    """ 
     nodes = G.nodes()
-    hyperedges = list(G.edges()) 
+    edges = G.edges()
     
-    for i,p in enumerate(ps[1:]) :
-        d = i + 2 # order (+2 because we started with [1:])
-        for hyperedge in combinations(nodes, d+1) : 
-            if random.random() <= p :
-                hyperedges.append(hyperedge)
-                
-    return sort_hyperedges(hyperedges)
+    S = xgi.SimplicialComplex()
+    S.add_nodes_from(nodes) 
+    S.add_simplices_from(edges) 
+    
+    triangles_empty = find_triangles(G)
+    
+    if p2: 
+        triangles = [el for el in triangles_empty if random.random() <= p2]
+    else: 
+        triangles = triangles_empty
 
-def random_simplicial_complex_d2(N, p1, p2) : 
-    """Generates a random hypergraph
+    S.add_simplices_from(triangles) 
     
-    Generate N nodes, and connect any d+1 nodes 
-    by a hyperedge with probability ps[d].
-        
+    return S
+
+
+def random_flag_complex_d2(N, p, seed=None):
+    """Generate a maximal simplicial complex (up to order 2) from a
+    :math:`G_{N,p}` Erdős-Rényi random graph by filling all empty triangles with 2-simplices.
+
     Parameters
     ----------
-    N : int 
-        Number of nodes 
-    ps : list of floats
-        Probabilities (between 0 and 1) to create a hyperedge
-        at each order d between any d+1 nodes. ps[0] is edges, 
-        ps[1] for triangles, etc.
-        
-    Returns
-    -------
-    List of tuples
-        List of hypergraphs
-    """
-    
-    #I first generate a standard ER graph with edges connected with probability p1
-    G = nx.fast_gnp_random_graph(N, p1, seed=None)
-    
-    nodes = G.nodes()
-    hyperedges = list(G.edges()) 
-    
-    for hyperedge in combinations(nodes, 3) : 
-        if random.random() <= p2 :
-            hyperedges.append(hyperedge)
-            
-            # add each edge too
-            hyperedges.append((hyperedge[0], hyperedge[1]))
-            hyperedges.append((hyperedge[0], hyperedge[2]))
-            hyperedges.append((hyperedge[1], hyperedge[2]))
-
-    # get rid of duplicates 
-    hyperedges = set(sort_hyperedges(hyperedges))
-
-    return sort_hyperedges(hyperedges)
-
-def random_maximal_simplicial_complex_d2(N,p) : 
-    """Generate maximal simplicial complex from graph,
-    up to order 2, by filling all empty triangles.
-    
-    Parameters
-    ----------
-    N : int 
-        Number of nodes 
-    p : list of floats
-        Probabilities (between 0 and 1) to create an edge 
+    N : int
+        Number of nodes
+    p : float
+        Probabilities (between 0 and 1) to create an edge
         between any 2 nodes
-        
+    seed : int or None (default)
+        The seed for the random number generator
+
     Returns
     -------
-    hyperedges_final : list of tuples
-        List of hyperedges, i.e. tuples of length 2 and 3.
-    
+    SimplicialComplex
+
     Notes
     -----
     Computing all cliques quickly becomes heavy for large networks.
-    
     """
-    
-    G = nx.fast_gnp_random_graph(N, p, seed=None)
-    
-    nodes = G.nodes()
-    edges = list(G.edges()) 
-    
-    # compute all triangles to fill
-    all_cliques = list(nx.enumerate_all_cliques(G))
-    triad_cliques = [tuple(x) for x in all_cliques if len(x)==3 ]
-    triad_cliques = sort_hyperedges(triad_cliques)
-    
-#     # make simplicial complex by filling only some empty triangles
-#     if p2 < 1 :
-#         randoms = np.random.random((len(triad_cliques)))
-#         idx = np.where(randoms <= p2)[0]
-#         triad_cliques = [triad_cliques[i] for i in idx]
-    
-    hyperedges_final = sort_hyperedges(edges + triad_cliques)
-    return hyperedges_final
+    if seed is not None:
+        random.seed(seed)
+
+    if (p < 0) or (p > 1):
+        raise ValueError("p must be between 0 and 1 included.")
+
+    G = nx.fast_gnp_random_graph(N, p, seed=seed)
+
+    return flag_complex_d2(G)
 
 
-def fully_connected_hypergraph(N, d_max) : 
-    """Generates a fully connected hypergraphs
-    
-    Generate N nodes and connect any d+1 nodes
-    by a hyperedge, up to order d_max. 
+def degree_corr(H):
+    """Return the cross-order degree correlation of hypergraph H
     
     Parameters
     ----------
-    N : int 
-        Number of nodes  
-    d_max : int 
-        Highest order of interactions. For example, 
-        d_max=2 means we go up to triangles.    
-    """
-    
-    nodes = range(N)
-    
-    hyperedges = [] 
-    
-    for d in range(1, d_max+1) :
-        for hyperedge in combinations(nodes, d+1) : 
-            hyperedges.append(hyperedge)
-    
-    return sort_hyperedges(hyperedges)
-    
-    
-#======================
-# Multiorder Laplacian
-#======================
-
-def adj_tensor_of_order(d, N, hyperedges) : 
-    """Returns the adjacency tensor of order d
-    
-    Parameters
-    ----------
-    d : int 
-        Order of the adjacency matrix 
-    d_simplices : list of tuples 
-        Sorted list of hyperedges of order d
-        
-    Returns
-    -------
-    M : numpy array
-        Adjacency tensor of order d
-        
-    """
-    
-    d_hyperedges = hyperedges_of_order(hyperedges, d)
-    
-    assert len(d_hyperedges[0]) == d+1
-    
-    dims = (N,) * (d+1)
-    M = np.zeros(dims)
-    
-    for d_hyperedge in d_hyperedges :
-        for d_hyperedge_perm in permutations(d_hyperedge) : 
-    
-            M[d_hyperedge_perm] = 1
-    return M
-
-def adj_matrix_of_order(d, M) : 
-    """Returns the adjacency matrix of order d
-    
-    Parameters
-    ----------
-    d : int 
-        Order of the adjacency matrix 
-    M : numpy array
-        Adjacency tensor of order d
-        
-    Returns
-    -------
-    adj_d : numpy array
-        Matrix of dim (N, N)
-    
-    """
-    
-    adj_d = 1 / factorial(d-1) * np.sum(M, axis=tuple(range(d+1)[2:])) # sum over all axes except first 2 (i,j)
-    
-    return adj_d
-
-def degree_of_order(d, M) : 
-    """Returns the degree vector of order d
-    
-    Parameters
-    ----------
-    d : int 
-        Order of the degree
-    M : numpy array
-        Adjacency tensor of order d
-        
-    Returns
-    -------
-    K_d : numpy array
-        Vector of dim (N,)        
-    
-    """
-    
-    K_d = 1 / factorial(d) * np.sum(M, axis=tuple(range(d+1)[1:])) # sum over all axes except first 2 (i,j)
-    
-    return K_d
-
-def laplacian_of_order(d, N, hyperedges, return_k=False, rescale_per_node=False) :
-    """Returns the Laplacian matrix of order d
-    
-    Parameters
-    ----------
-    d : int 
-        Order of the adjacency matrix 
-    N : int
-        Number of nodes in the hypergraph
-    hyperedges : list of tuples 
-        Sorted list of hyperedges in the hypergraph
-    return_k ; bool, optional
-        If True, return the degrees
-    rescale_per_node : bool, optional
-        If True, divide the Laplacian by d, i.e.
-        by the number of neighbour-nodes in a d-simplex
+    H: xgi.Hypergraph
+        Hypergraph to consider
 
     Returns
     -------
-    L_d : numpy array
-        Laplacian of order d, NxN array   
-    
-    """
-    
-    d_hyperedges = hyperedges_of_order(hyperedges, d)
-    
-    M_d = adj_tensor_of_order(d, N, d_hyperedges)
-    
-    Adj_d = adj_matrix_of_order(d, M_d)
-    K_d = degree_of_order(d, M_d) 
-    
-    L_d = d * np.diag(K_d) - Adj_d
-    
-    if rescale_per_node : 
-        L_d /= d
-    
-    if return_k :
-        return L_d, K_d
-    else:
-        return L_d
+    float
 
-def compute_laplacians_resource_constrained(hyperedges, N, alpha, rescale_per_node=True, return_k=False) : 
-    """Compute the Laplacian up to order 2 and the multiorder Laplacian,
-    when the total coupling budge is constrained. 
+    """
+    K1 = xgi.degree_matrix(H, order=1)
+    K2 = xgi.degree_matrix(H, order=2)
+    return np.corrcoef(K1, K2, rowvar=False)[0, 1]
+
+
+def deg_hetero_ratio(HG):
+    """Return the degree heterogeneity ratio of hypergraph H
     
     Parameters
     ----------
-    hyperedges : list of tuples
-        List of hyperedges in the hypergraph, as tuples of nodes
-    N : int 
-        Number of nodes in the hypergraph
-    alpha : float
-        Relative coupling budget, in [0,1] assigned to 2nd order interactions. 
-        If alpha=0, we have 1st order interactions only.
-        If alpha=1, 2nd order interactions only.
-    rescale_per_node : bool, optional
-        If True (default), the Laplacian at each order gives equal weight 
-        to each hyperedge, regardless of the number of nodes involved.
-    return_k ; bool, optional
-        If True, return the degrees at each order
+    H: xgi.Hypergraph
+        Hypergraph to consider
 
     Returns
     -------
-    L1 : np.ndarray
-        Laplacian of order 1, NxN array. 
-    L2 : np.ndarray
-        Laplacian of order 2, NxN array. 
-    K1 : np.ndarray
-        If return_k=True, degrees of order 1. 
-    K2 : np.ndarray
-        If return_k=True, degrees of order 2. 
-    
-    Notes
-    -----
-    If the highest order is larger than 2 (triangles), modify the function accordingly.
-    
+    float
+
     """
-    L1, K1 = laplacian_of_order(d=1, N=N, hyperedges=hyperedges, return_k=True, rescale_per_node=rescale_per_node)
-    L2, K2 = laplacian_of_order(d=2, N=N, hyperedges=hyperedges, return_k=True, rescale_per_node=rescale_per_node)
-
-    gamma_1 = 1 - alpha
-    gamma_2 = alpha 
-
-    # multiorder Laplacian
-    L12 = (gamma_1 / np.mean(K1)) * L1 + (gamma_2 / np.mean(K2)) * L2 
+    k1_max = HG.nodes.degree(order=1).max()
+    k1_mean = HG.nodes.degree(order=1).mean()
     
-    if return_k : 
-        return L1, L2, L12, K1, K2
-    else : 
-        return L1, L2, L12
+    k2_max = HG.nodes.degree(order=2).max()
+    k2_mean = HG.nodes.degree(order=2).mean()
 
-def compute_eigenvalues_resource_constrained(hyperedges, N, alpha, rescale_per_node=True) :
-    """Compute corresponding Lyapunov exponents.
-
-    Parameters
-    ----------
-    hyperedges : list of tuples
-        List of hyperedges in the hypergraph, as tuples of nodes
-    N : int 
-        Number of nodes in the hypergraph
-    alpha : float
-        Relative coupling budget, in [0,1] assigned to 2nd order interactions. 
-        If alpha=0, we have 1st order interactions only.
-        If alpha=1, 2nd order interactions only.
-    rescale_per_node : bool, optional
-        If True (default), the Laplacian at each order gives equal weight 
-        to each hyperedge, regardless of the number of nodes involved.
-
-    Returns
-    -------
-    lyap_1 : numpy array
-        Lyapunov exponents of order 1
-    lyap_2 : numpy array
-        Lyapunov exponents of order 2
-    lyap_12 : numpy array            
-        Lyapununov exponents of the multiorder Laplacian    
-
-    Notes
-    -----
-    If the highest order is larger than 2 (triangles), modify the function accordingly.
-    """
-
-    L1, K1 = laplacian_of_order(d=1, N=N, hyperedges=hyperedges, return_k=True, rescale_per_node=rescale_per_node)
-    L2, K2 = laplacian_of_order(d=2, N=N, hyperedges=hyperedges, return_k=True, rescale_per_node=rescale_per_node)
-
-    gamma_1 = 1 - alpha
-    gamma_2 = alpha
-
-    # multiorder Laplacian
-    L12 = (gamma_1 / np.mean(K1)) * L1 + (gamma_2 / np.mean(K2)) * L2 
-
-    eival_1, _ = np.linalg.eig(L1)
-    eival_2, _ = np.linalg.eig(L2)
-
-    eival_12, _ = np.linalg.eig(L12)
-
-    lyap_1 = - (gamma_1 / np.mean(K1)) * eival_1
-    lyap_2 = - (gamma_2 / np.mean(K2)) * eival_2
-
-    # Multiorder Lyapunov exponents
-    lyap_12 = - eival_12
-
-    return lyap_1, lyap_2, lyap_12
-
-def compute_eigenvalues_resource_constrained_alphas(hyperedges, N, alphas) :
-    """Compute corresponding Lyapunov exponents for a range of alpha values.
-    
-    Parameters
-    ----------
-    hyperedges : list of tuples
-        List of hyperedges in the hypergraph, as tuples of nodes
-    N : int 
-        Number of nodes in the hypergraph
-    alphas : list of floats
-        List of relative coupling budgets, i,e, values in in [0,1]. 
-        If alpha=0, we have 1st order interactions only.
-        If alpha=1, 2nd order interactions only.
-    rescale_per_node : bool, optional
-        If True (default), the Laplacian at each order gives equal weight 
-        to each hyperedge, regardless of the number of nodes involved.
-
-    Returns
-    -------
-    lyap_1_arr : numpy array
-        Lyapunov exponents of order 1, for each alpha. Array of dim (n_alpha, N)
-    lyap_2_arr : numpy array
-        Lyapunov exponents of order 2, for each alpha. Array of dim (n_alpha, N)
-    lyap_12_arr : numpy array            
-        Lyapununov exponents of the multiorder Laplacian, for each alpha. Array of dim (n_alpha, N) 
-
-    Notes
-    -----
-    If the highest order is larger than 2 (triangles), modify the function accordingly.
-    
-    """
-
-    L1, K1 = laplacian_of_order(d=1, N=N, hyperedges=hyperedges, return_k=True, rescale_per_node=True)
-    L2, K2 = laplacian_of_order(d=2, N=N, hyperedges=hyperedges, return_k=True, rescale_per_node=True)
-
-    
-    lyap_1_arr = np.zeros((len(alphas), N))
-    lyap_2_arr = np.zeros((len(alphas), N))
-    lyap_12_arr = np.zeros((len(alphas), N))
-    
-    for i, alpha in enumerate(alphas) : 
-    
-        gamma_1 = 1 - alpha
-        gamma_2 = alpha
-
-        # multiorder Laplacian
-        L12 = (gamma_1 / np.mean(K1)) * L1 + (gamma_2 / np.mean(K2)) * L2 #+ (gamma_3 / np.mean(K3)) * L3
-
-        eival_1, _ = np.linalg.eig(L1)
-        eival_2, _ = np.linalg.eig(L2)
-
-        eival_12, _ = np.linalg.eig(L12)
-
-        lyap_1_arr[i] = - (gamma_1 / np.mean(K1)) * eival_1
-        lyap_2_arr[i] = - (gamma_2 / np.mean(K2)) * eival_2
-
-        # Multiorder Lyapunov exponents
-        lyap_12_arr[i] = - eival_12
-
-    return lyap_1_arr, lyap_2_arr, lyap_12_arr
+    h1 = (k1_max - k1_mean) / k1_mean
+    h2 = (k2_max - k2_mean) / k2_mean
+    r2 = h2 / h1  # eq 12
+    return r2
