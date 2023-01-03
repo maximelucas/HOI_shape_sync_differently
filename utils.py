@@ -7,19 +7,19 @@ from itertools import combinations
 
 import networkx as nx
 import numpy as np
-
 import xgi
 
-__all__ = ["compute_eigenvalues", 
-            "compute_eigenvalues_multi", 
-            "shuffle_hyperedges", 
-            "node_swap",
-            "find_triangles", 
-            "flag_complex_d2", 
-            "random_flag_complex_d2",
-            "degree_corr",
-            "deg_hetero_ratio",
-            ]
+__all__ = [
+    "compute_eigenvalues",
+    "compute_eigenvalues_multi",
+    "shuffle_hyperedges",
+    "node_swap",
+    "find_triangles",
+    "flag_complex_d2",
+    "random_flag_complex_d2",
+    "degree_corr",
+    "deg_hetero_ratio",
+]
 
 
 def compute_eigenvalues(H, order, weight, rescale_per_node=True):
@@ -124,7 +124,7 @@ def shuffle_hyperedges(S, order, p):
 
 def node_swap(H, nid1, nid2, id_temp=-1, order=None):
     """Swap node nid1 and node nid2 in all edges of order order that contain them
-    
+
     Parameters
     ----------
     H: HyperGraph
@@ -136,51 +136,51 @@ def node_swap(H, nid1, nid2, id_temp=-1, order=None):
     id_temp: node ID
         Temporary ID given to nodes when swapping
     order: {int, None}, default: None
-        If None, consider all orders. If an integer, 
+        If None, consider all orders. If an integer,
         consider edges of that order.
-        
+
     Returns
     -------
     HH: HyperGraph
-    
+
     """
 
     # make sure id_temps does not exist yet
     while id_temp in H.edges:
         id_temp -= 1
-    
+
     if order:
         edge_dict = H.edges.filterby("order", order).members(dtype=dict).copy()
-    else: 
+    else:
         edge_dict = H.edges.members(dtype=dict).copy()
-        
+
     new_edge_dict = deepcopy(edge_dict)
     HH = H.copy()
-    
+
     for key, members in edge_dict.items():
-    
-        if nid1 in members: 
+
+        if nid1 in members:
             members.remove(nid1)
             members.add(id_temp)
         new_edge_dict[key] = members
 
     for key, members in new_edge_dict.items():
 
-        if nid2 in members: 
+        if nid2 in members:
             members.remove(nid2)
             members.add(nid1)
         new_edge_dict[key] = members
 
     for key, members in new_edge_dict.items():
 
-        if id_temp in members: 
+        if id_temp in members:
             members.remove(id_temp)
             members.add(nid2)
         new_edge_dict[key] = members
-    
+
     HH.remove_edges_from(edge_dict)
     HH.add_edges_from(new_edge_dict)
-    
+
     return HH
 
 
@@ -195,7 +195,7 @@ def find_triangles(G):
     Returns
     -------
     list of triangles
-    """ 
+    """
 
     triangles = set(
         frozenset((n, nbr, nbr2))
@@ -220,23 +220,23 @@ def flag_complex_d2(G, p2=None):
     -------
     S : xgi.SimplicialComplex
 
-    """ 
+    """
     nodes = G.nodes()
     edges = G.edges()
-    
+
     S = xgi.SimplicialComplex()
-    S.add_nodes_from(nodes) 
-    S.add_simplices_from(edges) 
-    
+    S.add_nodes_from(nodes)
+    S.add_simplices_from(edges)
+
     triangles_empty = find_triangles(G)
-    
-    if p2: 
+
+    if p2:
         triangles = [el for el in triangles_empty if random.random() <= p2]
-    else: 
+    else:
         triangles = triangles_empty
 
-    S.add_simplices_from(triangles) 
-    
+    S.add_simplices_from(triangles)
+
     return S
 
 
@@ -275,7 +275,7 @@ def random_flag_complex_d2(N, p, seed=None):
 
 def degree_corr(H):
     """Return the cross-order degree correlation of hypergraph H
-    
+
     Parameters
     ----------
     H: xgi.Hypergraph
@@ -293,7 +293,7 @@ def degree_corr(H):
 
 def deg_hetero_ratio(HG):
     """Return the degree heterogeneity ratio of hypergraph H
-    
+
     Parameters
     ----------
     H: xgi.Hypergraph
@@ -306,7 +306,7 @@ def deg_hetero_ratio(HG):
     """
     k1_max = HG.nodes.degree(order=1).max()
     k1_mean = HG.nodes.degree(order=1).mean()
-    
+
     k2_max = HG.nodes.degree(order=2).max()
     k2_mean = HG.nodes.degree(order=2).mean()
 
