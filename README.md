@@ -9,7 +9,7 @@ by Yuanzhao Zhang, Maxime Lucas, and Federico Battiston.
 ### Contents
 - `utils.py`: useful functions used in the notebooks.
 - `*.ipynb`: the notebooks used to reproduce the results and figures.
-- `data/`: the data used in the analysis.
+- `data/`: the brain connectome data used in Figs. 5 to 7 (available from https://neurodata.io/project/connectomes/). 
 
 ### Dependencies
 
