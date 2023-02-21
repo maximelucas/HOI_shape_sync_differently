@@ -1,5 +1,7 @@
 # Higher-order interactions shape collective dynamics differently in hypergraphs and simplicial complexes
 
+[![DOI](https://zenodo.org/badge/466099254.svg)](https://zenodo.org/badge/latestdoi/466099254)
+
 This repository contains the code used for the analysis presented in the paper:  
 "[Higher-order interactions shape collective dynamics differently in hypergraphs and simplicial complexes][2],"  
 by Yuanzhao Zhang, Maxime Lucas, and Federico Battiston.
