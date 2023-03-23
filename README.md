@@ -4,7 +4,8 @@
 
 This repository contains the code used for the analysis presented in the paper:  
 "[Higher-order interactions shape collective dynamics differently in hypergraphs and simplicial complexes][2],"  
-by Yuanzhao Zhang, Maxime Lucas, and Federico Battiston.
+by Yuanzhao Zhang*, Maxime Lucas*, and Federico Battiston  
+*Nat. Commun.* **14**, 1605 (2023)
 
 <img src="https://user-images.githubusercontent.com/7493360/220310428-c26eb720-1519-4a1d-acac-5228191db7c2.jpeg" width="45%">
 
@@ -22,4 +23,4 @@ In particular, the code heavily relies on the [XGI library](https://github.com/C
 The code to compute the multiorder Laplacian is based on the [repository](https://github.com/maximelucas/multiorder_Laplacian) associated with the paper, "Multiorder Laplacian for synchronization in higher-order networks" (2020), by Lucas, M., Cencetti, G., & Battiston, F. [Phys. Rev. Res., 2(3)][1], 033410.
 
 [1]: https://doi.org/10.1103/PhysRevResearch.2.033410
-[2]: https://arxiv.org/abs/2203.03060
+[2]: https://doi.org/10.1038/s41467-023-37190-9
